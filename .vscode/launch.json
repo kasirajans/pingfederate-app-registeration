@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        
+      {
+        "name": "Generate US Local Merged Output",
+        "type": "debugpy",
+        "request": "launch",
+        "program": "${workspaceFolder}/scripts/read_yaml.py",  // Path to your Python script
+        "console": "integratedTerminal",
+        "args": [
+          "US",
+          "Local"
+      ]
+      }
+    ]
+  }

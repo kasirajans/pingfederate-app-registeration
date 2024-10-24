@@ -1,0 +1,113 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Step 1 US Local Change Data",
+            "type": "shell",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/scripts/read_yaml.py",
+                "US",
+                "Local"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Generate Random ClientId",
+            "type": "shell",
+            "command": "terraform",
+            "args": [
+                "apply",
+                "-state=US_Local.tfstate",
+                "-var-file=us.local.tfvars",
+                "-var", "region=US",
+                "-var", "env=Local",
+                "-target=random_string.clientId",
+                "-auto-approve"
+            ],
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Step 2 US Local Plan",
+            "type": "shell",
+            "command": "terraform",
+            "args": [
+                "plan",
+                "-state=US_Local.tfstate",
+                "-var-file=us.local.tfvars",
+                "-var", "region=US",
+                "-var", "env=Local",
+                "-out", "tfplan"
+            ],
+            "group": "build",
+            "problemMatcher": [],
+            "dependsOn": ["Generate Random ClientId"]
+        },
+        {
+            "label": "Step 3 US Local Display change",
+            "type": "shell",
+            "command": "python",
+            "args": [
+                "./scripts/readTFResource.py"
+            ],
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Step 4 US Local Apply tfplan",
+            "type": "shell",
+            "command": "terraform",
+            "args": [
+                "apply",
+                "-state=US_Local.tfstate",
+                "tfplan"
+            ],
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Step 5 US Local Destroy",
+            "type": "shell",
+            "command": "terraform",
+            "args": [
+                "destroy",
+                "-state=US_Local.tfstate",
+                "-var-file=us.local.tfvars",
+                "-var", "region=US",
+                "-var", "env=Local"
+            ],
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Debug US Local TF console",
+            "type": "shell",
+            "command": "terraform",
+            "args": [
+                "console",
+                "-state=US_Local.tfstate"
+            ],
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Get OAuth Clients Output",
+            "type": "shell",
+            "command": "terraform",
+            "args": [
+                "output",
+                "-state=US_Local.tfstate",
+                "oauth_clients"
+                 
+            ],
+            "group": "build",
+            "problemMatcher": [],
+            "dependsOn": ["Step 4 US Local Apply tfplan"]
+        }
+    ]
+}

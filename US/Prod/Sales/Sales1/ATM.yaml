@@ -1,0 +1,30 @@
+- TicketNo: Tno1751319
+  attributes:
+    # - userName:
+    #     source:
+    #       type: TEXT
+    #     value: test
+    - aud:
+        source:
+          type: TEXT
+        value: api://local-us-dev  
+    - iat:
+        source:
+          type: EXPRESSION
+        value: "#iat = @org.jose4j.jwt.NumericDate@now().getValue()"
+    - scp:
+        source:
+          type: CONTEXT
+        value: OAuthScopes
+    - cid:
+        source:
+          type: CONTEXT
+        value: ClientId
+    - clm:
+        source:
+          type: EXPRESSION
+        value: JSONParser_LDAP_Get_clm
+
+  scopes:
+    - Inventory.Check
+    - Inventory.Update

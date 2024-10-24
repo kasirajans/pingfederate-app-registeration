@@ -1,0 +1,10 @@
+contacts:
+  business_owner_email_id:
+    - user1@local.com
+  technial_owner_email_id:
+    - user2@local.com
+  team_pdl_email_id:
+    - user3@local.com
+others:
+  FrameWork:
+    - [java]

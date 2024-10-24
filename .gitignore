@@ -1,0 +1,23 @@
+# Ignore all .tfvars files
+*.tfvars
+
+# Do not ignore us.prod.tfvars
+!us.prod.tfvars
+!eu.prod.tfvars
+!us.local.tfvars
+*.crt
+*.key
+.venv
+
+*_output.json
+.terraform*
+*.log
+
+*.tfstate
+*tfplan
+*.backup
+.vscode/swissknifeDecorators.json
+aws/terraform.tfstate.backup
+certs
+aws
+*.tfvars

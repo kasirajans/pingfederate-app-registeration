@@ -1,0 +1,18 @@
+
+# The following example shows the structure of a CODEOWNERS file.
+
+
+
+# Owners for specific directories
+# /docs/ @docs-team
+# /scripts/ @scripts-owner
+
+# Owners for specific files
+# README.md @repo-admin
+
+# Owners for files with specific extensions
+# *.js @frontend-team
+# *.py @backend-team
+
+# Multiple owners for a directory
+/security/ @security

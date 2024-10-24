@@ -1,0 +1,31 @@
+- TicketNo: Tno1776424
+  grantTypes:
+    - CLIENT_CREDENTIALS
+  scopes:
+    - Inventory.Check
+    - Inventory.Update
+ 
+  InternalOrExternal: Internal
+  IsPartner: false
+  SafeName: Inventory_safe
+  clm: { # clm add default
+    "Inventory": [
+      "car1",
+      "car2",
+      "car3"
+    ],
+    "contentupload": "car",
+    "type": "external"
+  }
+
+- TicketNo: Tno1776424
+  name: Service
+  grantTypes:
+    - CLIENT_CREDENTIALS
+  InternalOrExternal: Internal
+  IsPartner: false
+  SafeName: Service_safe
+  client_id: 0oa14is7lcdfdnr3x352
+  tags:
+    - legacy
+
