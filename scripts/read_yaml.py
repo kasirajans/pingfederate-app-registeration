@@ -1,141 +1,241 @@
 import os
-import sys
 import yaml
 import json
-import argparse
+import sys
 import logging
 
-# Configure logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-                    
-def read_yaml_file(filepath):
-    """Reads a YAML file and returns its contents."""
-    logging.debug(f"Reading YAML file from: {filepath}")
+# Set up logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("processing.log"),
+        logging.StreamHandler()
+    ]
+)
 
-    # Check if the file is empty
-    if os.path.getsize(filepath) == 0:
-        logging.warning(f"The file at {filepath} is empty. Skipping.")
-        return None  # Return None if the file is empty
-
+def load_yaml_file(filepath):
+    """Helper function to load a YAML file"""
+    logging.debug(f"Attempting to load YAML file: {filepath}")
     try:
         with open(filepath, 'r') as file:
-            data = yaml.safe_load(file)
-            if data is None:
-                raise ValueError(f"The YAML file at {filepath} is empty or invalid.")
-            return data
-    except yaml.YAMLError as e:
-        logging.debug(f"YAML error while reading {filepath}: {e}")
-        return None
+            return yaml.safe_load(file)
     except Exception as e:
-        logging.debug(f"Error reading YAML file: {e}")
-        return None  # Return None on error
+        logging.error(f"Failed to load YAML file: {filepath}, error: {e}")
+        raise
 
-def build_json_structure(yaml_data, folder_hierarchy, global_ticket_numbers, yaml_path):
-    """Build a structured JSON from the parsed YAML data."""
-    json_output = []
-    ticket_numbers_clients = set()  # Track TicketNo for clients in this file
+def generate_pfname_only(data, relative_path, domain_name):
+    """Generate 'pfname' based on the folder structure"""
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                if relative_path == '.':
+                    relative_path = domain_name.lower()
+                relative_path = relative_path.strip('_')
 
-    # Check if the data is a list of entries
-    if isinstance(yaml_data, list):
-        for entry in yaml_data:
-            json_entry = entry if isinstance(entry, dict) else {}
-
-            # Determine if this is a client or ATM entry based on the content of the entry
-            if 'TicketNo' in json_entry:
-                ticket_no = json_entry['TicketNo']
-
-                # Ensure unique TicketNo across all files
-                if ticket_no in global_ticket_numbers:
-                    logging.warning(f"Duplicate TicketNo found across files: {ticket_no}. "
-                          f"Skipping entry in file: {yaml_path}")
-                    continue  # Skip duplicate TicketNo globally
+                # Append 'name' if it exists, or use relative_path alone
+                if 'name' in item and item['name']:
+                    item['pfname'] = f"{relative_path}_{item['name'].lower()}"
                 else:
-                    global_ticket_numbers.add(ticket_no)
-                    # If it has a name field, prefix with the folder hierarchy
-                    if 'name' in json_entry:
-                        json_entry['name'] = f"{folder_hierarchy}_{json_entry['name']}"
-                    else:
-                        # Use the folder hierarchy as the name if not already present
-                        json_entry['name'] = f"{folder_hierarchy}"
+                    item['pfname'] = relative_path
 
-            json_output.append(json_entry)
+                logging.debug(f"Generated pfname: {item['pfname']}")
 
-    return json_output
+    return data
 
-def find_yaml_files(base_path, yaml_file):
-    """Search for all matching YAML files within the given base path and its subdirectories."""
-    matching_files = []
-    for root, dirs, files in os.walk(base_path):
-        for file in files:
-            if file.lower() == yaml_file.lower():  # Case insensitive comparison
-                matching_files.append(os.path.join(root, file))
-    return matching_files
+def generate_description_from_appconfig(app_config):
+    """Generate description from the appConfig.yaml contacts"""
+    contacts = app_config.get('contacts', {})
+    business_owner_email = contacts.get('business_owner_email_id', [''])[0]
+    technical_owner_email = ",".join(contacts.get('technial_owner_email_id', []))
+    team_pdl_email = contacts.get('team_pdl_email_id', [''])[0]
+    return f"{business_owner_email}:{technical_owner_email}:{team_pdl_email}"
 
-def main():
-    parser = argparse.ArgumentParser(description='Process YAML file based on environment.')
-    parser.add_argument('--env', required=True, help='The environment (e.g., US_Prod)')
-    parser.add_argument('--file', required=True, help='The name of the YAML file')
+def generate_client_description(client, app_config):
+    """Generate description for client based on appConfig.yaml"""
+    contacts_description = generate_description_from_appconfig(app_config)
+    ticket_no = client.get('TicketNo', '')
+    internal_or_external = client.get('InternalOrExternal', '')
+    is_partner = client.get('IsPartner', '')
+    safe_name = client.get('SafeName', '')
+    return f"{ticket_no}:{contacts_description}:{internal_or_external}:{is_partner}:{safe_name}"
 
-    args = parser.parse_args()
-    env = args.env
-    yaml_file = args.file
+def check_unique_ticketno(data, ticketnos, file_path, entry_type):
+    """Ensure TicketNo is unique, log duplicates"""
+    valid_entries = []
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict) and 'TicketNo' in item:
+                ticketno = item['TicketNo']
+                if ticketno in ticketnos:
+                    logging.error(f"Duplicate TicketNo found in {entry_type}: {ticketno} in file: {file_path}. Skipping.")
+                    continue  # Skip duplicates
+                logging.debug(f"TicketNo is unique: {ticketno}")
+                ticketnos.add(ticketno)
+                valid_entries.append(item)  # Add non-duplicate entries
+    return valid_entries
 
-    # Convert Env US_Prod to US/Prod and format for output filename
-    env_path = env.replace("_", "/")
-    
-    
-    
-    # Construct the base path from the environment
-    base_path = os.path.join(env_path)  # This should point to "US" or "EU"
-    logging.debug(f"Searching for YAML file '{yaml_file}' in: {base_path}")
+def merge_and_deduplicate_scopes(atm_entries):
+    """Merge and deduplicate scopes in ATM entries"""
+    all_scopes = []
+    scope_sources = {}
 
-    # Find all YAML files matching the file name
-    yaml_paths = find_yaml_files(base_path, yaml_file)
+    for atm in atm_entries:
+        if 'scopes' in atm:
+            for scope in atm['scopes']:
+                if scope in scope_sources:
+                    scope_sources[scope].append(atm.get('file_path', 'Unknown file'))
+                else:
+                    scope_sources[scope] = [atm.get('file_path', 'Unknown file')]
+                all_scopes.append(scope)
 
-    if not yaml_paths:
-        logging.debug(f"No files found: {yaml_file} in {base_path}")
-        sys.exit(1)
+    unique_scopes = list(set(all_scopes))
+    if len(unique_scopes) < len(all_scopes):
+        duplicate_scopes = set([scope for scope in all_scopes if all_scopes.count(scope) > 1])
+        for scope in duplicate_scopes:
+            logging.warning(f"Duplicate scope '{scope}' found in files: {', '.join(scope_sources[scope])}")
 
-    # Global set to track TicketNo across all files
-    global_ticket_numbers = set()
+    return unique_scopes
 
-    # Merge all matching YAML files
-    merged_data = []
-    for yaml_path in yaml_paths:
-        logging.debug(f"Reading YAML file from: {yaml_path}")
-        folder_hierarchy = os.path.relpath(os.path.dirname(yaml_path), base_path).replace("/", "_")
-        yaml_data = read_yaml_file(yaml_path)
+def process_directory(region, env, base_path, domain_path, domain_name, current_dir, ticketnos, combined_data):
+    """Process all directories and files under the domain"""
+    individual_data = {
+        'ATM': [],
+        'clients': []
+    }
 
-        if yaml_data is None:
-            logging.debug(f"Skipping processing for empty or invalid file: {yaml_path}")
+    for root, dirs, files in os.walk(domain_path):
+        logging.debug(f"Processing directory: {root}")
+
+        # Find relevant YAML files in the current folder
+        atm_file = os.path.join(root, 'ATM.yaml')
+        clients_file = os.path.join(root, 'clients.yaml')
+        app_config_file = os.path.join(root, 'appConfig.yaml')
+
+        # Ensure appConfig.yaml exists
+        if not os.path.exists(app_config_file):
+            logging.warning(f"Skipping {root}: appConfig.yaml not found.")
+            continue  # Skip if appConfig.yaml is missing
+
+        # Load appConfig.yaml
+        app_config = load_yaml_file(app_config_file)
+        atm_description = generate_description_from_appconfig(app_config)
+
+        # Calculate relative path and folder level
+        relative_path = os.path.relpath(root, base_path).replace(os.sep, '_').lower()
+        folder_level = relative_path.count('_') + 1  # Calculate folder level
+
+        # Load and process ATM.yaml
+        if os.path.exists(atm_file):
+            atm_data = load_yaml_file(atm_file)
+            for atm in atm_data:
+                atm['description'] = atm_description
+                atm['file_path'] = atm_file  # Add file path to each ATM entry
+                atm['folder_level'] = folder_level  # Add folder level to each ATM entry
+            valid_atm_entries = check_unique_ticketno(atm_data, ticketnos, atm_file, 'ATM')
+            valid_atm_entries = generate_pfname_only(valid_atm_entries, relative_path, domain_name)
+            individual_data['ATM'].extend(valid_atm_entries)
+            combined_data['ATM'].extend(valid_atm_entries)
+
+        # Load and process clients.yaml
+        if os.path.exists(clients_file):
+            clients_data = load_yaml_file(clients_file)
+            for client in clients_data:
+                client['description'] = generate_client_description(client, app_config)
+                client['file_path'] = clients_file  # Add file path to each client entry
+                client['folder_level'] = folder_level  # Add folder level to each client entry
+            valid_clients_entries = check_unique_ticketno(clients_data, ticketnos, clients_file, 'clients')
+            valid_clients_entries = generate_pfname_only(valid_clients_entries, relative_path, domain_name)
+            individual_data['clients'].extend(valid_clients_entries)
+            combined_data['clients'].extend(valid_clients_entries)
+
+    # Merge and deduplicate scopes in combined_data['ATM']
+    combined_data['scopes'] = merge_and_deduplicate_scopes(combined_data['ATM'])
+
+    # Create individual JSON file for the processed domain
+    if individual_data['ATM'] or individual_data['clients']:
+        individual_output_file = os.path.join(current_dir, f"{region}_{env}_{domain_name}_output.json")
+        try:
+            with open(individual_output_file, 'w') as json_file:
+                json.dump(individual_data, json_file, indent=4)
+            logging.info(f"Individual JSON file created: {individual_output_file}")
+        except Exception as e:
+            logging.error(f"Failed to create individual JSON file: {individual_output_file}, error: {e}")
+            raise
+
+def convert_to_json(env, region, domain=None):
+    """Convert YAML to JSON for all directories"""
+    base_path = os.path.abspath(os.path.join(os.getcwd(), region, env))
+    current_dir = os.getcwd()  # Get current working directory
+    ticketnos = set()  # Track unique TicketNo
+
+    logging.info(f"Starting conversion for {region}/{env} with domain {domain or 'all domains'}")
+    logging.info(f"Current working directory: {current_dir}")
+    logging.info(f"Base path: {base_path}")
+
+    # Initialize the combined data structure
+    combined_data = {
+        'ATM': [],
+        'clients': [],
+        'scopes': []
+    }
+
+    # Check if the base path exists
+    if not os.path.exists(base_path):
+        logging.error(f"Base path does not exist: {base_path}")
+        merged_output_file = os.path.join(current_dir, f"{region}_{env}_merged_output.json") # Create an empty merged JSON file
+        try:
+            with open(merged_output_file, 'w') as json_file:
+                json.dump(combined_data, json_file, indent=4)
+            logging.info(f"Empty merged JSON file created: {merged_output_file}")
+        except Exception as e:
+            logging.error(f"Failed to create empty merged JSON file: {merged_output_file}, error: {e}")
+        return  # Exit the function after creating the empty JSON file
+
+    # Process all domains if no specific domain is passed
+    domains = [d for d in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, d))]
+
+    if domain and domain in domains:
+        # If a specific domain is passed, process only that domain
+        domains = [domain]
+
+    for domain in domains:
+        domain_path = os.path.join(base_path, domain)
+        if not os.path.exists(domain_path):
+            logging.warning(f"Skipping {domain_path}: Domain path not found.")
             continue
 
-        structured_data = build_json_structure(yaml_data, folder_hierarchy, global_ticket_numbers, yaml_path)
-        merged_data.extend(structured_data)
+        try:
+            process_directory(region, env, base_path, domain_path, domain, current_dir, ticketnos, combined_data)
+        except Exception as e:
+            logging.error(f"Error processing {domain_path}: {e}")
+            continue  # Log the error and continue processing other domains
 
-    # Write the merged structured data as JSON to the output file
-    file_name = f"{env.lower()}_{yaml_file.split('.')[0].lower()}.json"
+    # Create the final merged JSON output file
+    merged_output_file = os.path.join(current_dir, f"{region}_{env}_merged_output.json")
+    try:
+        with open(merged_output_file, 'w') as json_file:
+            json.dump(combined_data, json_file, indent=4)
+        logging.info(f"Merged JSON file created: {merged_output_file}")
+    except Exception as e:
+        logging.error(f"Failed to create merged JSON file: {merged_output_file}, error: {e}")
+        raise
 
-    # Get the current working directory
-    current_directory = os.getcwd()
-    logging.debug(f"Current Directory: {current_directory}")
-
-    # Define the file name and path for the parent directory
-    # parent_directory = os.path.join(current_directory, os.pardir)
-    output_file = os.path.join(current_directory, file_name.replace("/", "_"))
-
-
-    # with open(output_file, 'w') as f:
-    # First serialization
-    json_data = json.dumps(merged_data)
-    # Second serialization (this is where the problem occurs)
-    # output = json.dumps({"resources": json_data})
-
-    print(json.dumps({"resources": json_data}))
-    # print(json.dumps(json.dumps({"resources": merged_data})))
-        # json.dump(serilized, f, indent=2)
-
-    logging.debug(f"Structured data written to: {output_file}")
+    logging.info(f"Finished processing {region}/{env}")
 
 if __name__ == "__main__":
-    main()
+    # Example arguments: US Prod Inventory or just US Prod
+    if len(sys.argv) < 3:
+        logging.error("Usage: python script.py <Region> <Environment> [<Domain>]")
+        sys.exit(1)
+
+    region = sys.argv[1]  # US or EU
+    env = sys.argv[2]     # Prod, UAT, Dev, etc.
+    domain = sys.argv[3] if len(sys.argv) == 4 else None  # Optional domain
+
+    try:
+        convert_to_json(env, region, domain)
+        print("Processing completed successfully.")
+    except Exception as e:
+        logging.error(f"Error during processing: {e}")
+        sys.exit(1)
